@@ -3,7 +3,7 @@ import json
 import os
 import streamlit as st
 
-BACKEND = "http://172.18.239.242:8000"
+BACKEND = "http://127.0.0.1:8000"
 
 # ── Severity mappings (ops-center palette) ───────────────────────
 SEV_COLOR   = {"L3": "#FF2D55", "L2": "#FF6B35", "L1": "#30D158"}

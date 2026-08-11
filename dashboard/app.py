@@ -49,13 +49,20 @@ def fetch_detections(limit: int = 100) -> list:
 
 
 @st.cache_data(ttl=2)
-def fetch_gcs_status() -> dict:
+def fetch_gcs_status():
     try:
         r = requests.get(f"{BACKEND}/api/gcs/status", timeout=2)
+        print(r.status_code)
+        print(r.text)
         return r.json()
-    except Exception:
-        return {"connected": False, "fps": 0.0, "last_gps": {}, "frames_received": 0}
-
+    except Exception as e:
+        print("ERROR:", e)
+        return {
+            "connected": False,
+            "fps": 0,
+            "last_gps": {},
+            "frames_received": 0,
+        }
 
 @st.cache_data(ttl=3)
 def fetch_llm_reports(seconds: int = 60, limit: int = 10) -> list:
@@ -489,6 +496,7 @@ else:
 
 # ── GCS status for header ────────────────────────────────────────
 _gcs             = fetch_gcs_status()
+st.write("DEBUG:", _gcs)
 _drone_connected = _gcs.get("connected", False)
 _conn_color      = "#00D9FF" if _drone_connected else "#FF2D55"
 _conn_label      = "OPERATIONAL" if _drone_connected else "DRONE OFFLINE"
