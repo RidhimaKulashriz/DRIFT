@@ -837,14 +837,6 @@ streamlit run dashboard/app.py
 
 ### Dashboard output
 
-Add the actual screenshot here:
-
-```markdown
-![DRIFT Dashboard](docs/images/dashboard.png)
-```
-
-Recommended screenshot:
-
 ```text
 ┌──────────────────────────────────────────────────────────────┐
 │                         DRIFT                                │
