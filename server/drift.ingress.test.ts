@@ -32,6 +32,8 @@ const context = {
 } as TrpcContext;
 
 describe("DRIFT ingress route persistence", () => {
+  const anonymousContext = { user: null, req: {} as TrpcContext["req"], res: {} as TrpcContext["res"] } as TrpcContext;
+
   beforeEach(() => {
     vi.clearAllMocks();
     addTelemetryRecord.mockResolvedValue({ id: 501 });
@@ -46,6 +48,20 @@ describe("DRIFT ingress route persistence", () => {
 
     await expect(caller.drift.ingestTelemetry(payload)).resolves.toEqual({ id: 501 });
     expect(addTelemetryRecord).toHaveBeenCalledWith(payload);
+  });
+
+  it("rejects unauthorized telemetry and evidence callers", async () => {
+    const caller = appRouter.createCaller(anonymousContext);
+    await expect(caller.drift.ingestTelemetry({ missionId: 77, latitude: 28.6139, longitude: 77.209, altitude: 42, speedMps: 8, batteryPercent: 86, timestamp: Date.now() })).rejects.toThrow(/UNAUTHORIZED|logged in|Please login/i);
+    await expect(caller.drift.evidence.upload({ missionId: 77, fileName: "bridge-frame.jpg", mimeType: "image/jpeg", base64: "data:image/jpeg;base64,AA==", mediaKind: "photo" })).rejects.toThrow(/UNAUTHORIZED|logged in|Please login/i);
+  });
+
+  it("rejects invalid telemetry and empty evidence bytes before persistence", async () => {
+    const caller = appRouter.createCaller(context);
+    await expect(caller.drift.ingestTelemetry({ missionId: 77, latitude: 95, longitude: 77.209, altitude: 42, speedMps: 8, batteryPercent: 86, timestamp: Date.now() })).rejects.toThrow(/geographic bounds|outside valid/i);
+    await expect(caller.drift.evidence.upload({ missionId: 77, fileName: "empty.jpg", mimeType: "image/jpeg", base64: "data:image/jpeg;base64,====", mediaKind: "photo" })).rejects.toThrow(/between 1 byte and 50 MB/i);
+    expect(addTelemetryRecord).not.toHaveBeenCalled();
+    expect(createEvidenceRecord).not.toHaveBeenCalled();
   });
 
   it("stores uploaded evidence with SHA-256 provenance and persists the inference defect", async () => {
