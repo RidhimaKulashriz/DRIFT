@@ -30,7 +30,7 @@ export const appRouter = router({
     hardwareStatus: publicProcedure.query(() => probeHardwareConnection()),
     validateTelemetry: protectedProcedure.input(z.unknown()).mutation(({ input }) => validateTelemetryPayload(input)),
     ingestTelemetry: protectedProcedure.input(z.object({ missionId: z.number().int().positive(), latitude: z.number(), longitude: z.number(), altitude: z.number().nonnegative(), speedMps: z.number().nonnegative(), batteryPercent: z.number().min(0).max(100), timestamp: z.number().int().positive() })).mutation(async ({ input }) => {
-      const validation = validateTelemetryPayload({ latitude: input.latitude, longitude: input.longitude, altitude: input.altitude, batteryPercent: input.batteryPercent, timestamp: input.timestamp });
+      const validation = validateTelemetryPayload(input);
       if (!validation.valid) throw new Error(validation.message);
       return addTelemetryRecord(input);
     }),
