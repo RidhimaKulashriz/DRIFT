@@ -1,44 +1,42 @@
 services:
   - type: web
-    name: drift-inspection-platform
-    runtime: node
+    name: drift-api
+    runtime: python
     plan: free
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
-    startCommand: pnpm start
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: python run.py
     healthCheckPath: /
     autoDeploy: true
     envVars:
-      - key: NODE_ENV
-        value: production
-      - key: DATABASE_URL
+      - key: DB_HOST
         sync: false
-      - key: JWT_SECRET
+      - key: DB_PORT
+        value: "5432"
+      - key: DB_NAME
         sync: false
-      - key: VITE_APP_ID
+      - key: DB_USER
         sync: false
-      - key: VITE_APP_TITLE
+      - key: DB_PASSWORD
         sync: false
-      - key: VITE_APP_LOGO
+      - key: GCS_HEADLESS
+        value: "1"
+      - key: DRIFT_RELOAD
+        value: "0"
+      - key: OLLAMA_HOST
         sync: false
-      - key: VITE_OAUTH_PORTAL_URL
+      - key: OLLAMA_PORT
+        value: "11434"
+      - key: OPENAI_API_KEY
         sync: false
-      - key: OAUTH_SERVER_URL
-        sync: false
-      - key: OWNER_OPEN_ID
-        sync: false
-      - key: BUILT_IN_FORGE_API_URL
-        sync: false
-      - key: BUILT_IN_FORGE_API_KEY
-        sync: false
-      - key: VITE_FRONTEND_FORGE_API_URL
-        sync: false
-      - key: VITE_FRONTEND_FORGE_API_KEY
-        sync: false
-      - key: DRIFT_INGEST_TOKEN
-        sync: false
-      - key: DRIFT_HARDWARE_ENDPOINT
-        sync: false
-      - key: ML_INFERENCE_URL
-        sync: false
-      - key: ML_INFERENCE_TOKEN
+
+  - type: web
+    name: drift-dashboard
+    runtime: python
+    plan: free
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: streamlit run dashboard/app.py --server.address 0.0.0.0 --server.port $PORT --server.headless true
+    healthCheckPath: /_stcore/health
+    autoDeploy: true
+    envVars:
+      - key: DRIFT_BACKEND_URL
         sync: false
