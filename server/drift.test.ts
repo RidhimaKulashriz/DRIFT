@@ -132,6 +132,10 @@ describe("public tRPC operations", () => {
     const ctx = { user: null, req: {} as TrpcContext["req"], res: {} as TrpcContext["res"] } as TrpcContext;
     const caller = appRouter.createCaller(ctx);
     const rows = await caller.drift.evidence.demoList({ missionId: 120001 });
+    if (rows.length === 0) {
+      expect(process.env.DATABASE_URL).toBeFalsy();
+      return;
+    }
     const reference = rows.find(item => item.fileName === "public-domain-pothole-reference.jpg");
     expect(reference?.source).toBe("simulator");
     expect(reference?.provenance).toEqual(expect.objectContaining({ kind: "reference-image", author: "Uncl3dad", license: "Public domain dedication", sourceUrl: "https://commons.wikimedia.org/wiki/File:Pothole_Big.jpg" }));
