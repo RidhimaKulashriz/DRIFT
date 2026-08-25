@@ -1,9 +1,10 @@
+import crypto from "node:crypto";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
 import { z } from "zod";
-import { acknowledgeAlert, addReview, addTelemetryRecord, createAssetRecord, createDemoMissionRecord, createEvidenceRecord, deleteAssetRecord, getMapData, getMissionOverview, listAlerts, listAssets, listAuditEvents, listDemoEvidence, listFilteredDefects, listMissionEvidence, listReportRecords, updateAssetRecord } from "./db";
+import { acknowledgeAlert, addReview, addTelemetryRecord, createAssetRecord, createDemoMissionRecord, createEvidenceRecord, deleteAssetRecord, getMapData, getMissionOverview, listAlerts, listAssets, listAuditEvents, listDemoEvidence, listFilteredDefects, listMissionEvidence, listReportRecords, persistInferenceDefect, updateAssetRecord } from "./db";
 import { requireDriftRole } from "./services/authorization";
 import { generateDecisionNarrative } from "./services/aiDecision";
 import { probeHardwareConnection, validateTelemetryPayload } from "./services/hardwareAdapter";
@@ -43,12 +44,16 @@ export const appRouter = router({
     evidence: router({
       list: protectedProcedure.input(z.object({ missionId: z.number().int().positive() })).query(({ input }) => listMissionEvidence(input.missionId)),
       demoList: publicProcedure.input(z.object({ missionId: z.number().int().positive() })).query(({ input }) => listDemoEvidence(input.missionId)),
-      upload: protectedProcedure.input(z.object({ missionId: z.number().int().positive(), fileName: z.string().min(1), mimeType: z.string().min(3), base64: z.string().min(8), mediaKind: z.enum(["photo", "video", "annotation", "report"]), latitude: z.string().optional(), longitude: z.string().optional(), playbackSeconds: z.number().int().nonnegative().optional() })).mutation(async ({ ctx, input }) => {
+      upload: protectedProcedure.input(z.object({ missionId: z.number().int().positive(), fileName: z.string().min(1).max(255), mimeType: z.string().min(3).max(120), base64: z.string().min(8), mediaKind: z.enum(["photo", "video", "annotation", "report"]), latitude: z.string().optional(), longitude: z.string().optional(), playbackSeconds: z.number().int().nonnegative().optional(), assetId: z.number().int().positive().optional(), assetCriticality: z.number().int().min(1).max(5).optional(), priorOpenDefects: z.number().int().min(0).max(100).optional(), runInference: z.boolean().default(true), capturedAt: z.number().int().positive().optional(), cameraId: z.string().max(120).optional() })).mutation(async ({ ctx, input }) => {
         const bytes = Buffer.from(input.base64.split(",").pop() ?? "", "base64");
-        if (bytes.byteLength > 20 * 1024 * 1024) throw new Error("Evidence upload exceeds the 20 MB platform limit.");
+        if (bytes.byteLength === 0 || bytes.byteLength > 50 * 1024 * 1024) throw new Error("Evidence upload must be between 1 byte and 50 MB.");
         const safeName = input.fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
         const stored = await storagePut(`drift/${ctx.user.id}/missions/${input.missionId}/${Date.now()}-${safeName}`, bytes, input.mimeType);
-        return createEvidenceRecord({ missionId: input.missionId, uploadedBy: ctx.user.id, fileName: input.fileName, mimeType: input.mimeType, storageKey: stored.key, storageUrl: stored.url, mediaKind: input.mediaKind, latitude: input.latitude, longitude: input.longitude, playbackSeconds: input.playbackSeconds });
+        const evidenceRecord = await createEvidenceRecord({ missionId: input.missionId, uploadedBy: ctx.user.id, fileName: input.fileName, mimeType: input.mimeType, storageKey: stored.key, storageUrl: stored.url, mediaKind: input.mediaKind, latitude: input.latitude, longitude: input.longitude, playbackSeconds: input.playbackSeconds, source: "upload", sha256: crypto.createHash("sha256").update(bytes).digest("hex"), capturedAt: input.capturedAt ? new Date(input.capturedAt) : undefined, cameraId: input.cameraId });
+        if (input.mediaKind !== "photo" || !input.runInference || !input.assetId || !input.assetCriticality || !input.latitude || !input.longitude) return { ...evidenceRecord, inference: null };
+        const inference = await runVisionInference({ fileName: input.fileName, imageBase64: input.base64, latitude: Number(input.latitude), longitude: Number(input.longitude), assetCriticality: input.assetCriticality, priorOpenDefects: input.priorOpenDefects ?? 0 });
+        const persisted = await persistInferenceDefect({ missionId: input.missionId, assetId: input.assetId, evidenceId: evidenceRecord.id, latitude: Number(input.latitude), longitude: Number(input.longitude), inference, createdBy: ctx.user.id });
+        return { ...evidenceRecord, inference: persisted };
       }),
     }),
     assets: router({

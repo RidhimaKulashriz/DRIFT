@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
 import { requireDriftRole } from "./services/authorization";
-import { getHardwareConnection, probeHardwareConnection, validateTelemetryPayload } from "./services/hardwareAdapter";
+import { authorizeBridgeToken, getHardwareConnection, probeHardwareConnection, validateTelemetryPayload } from "./services/hardwareAdapter";
 import { runVisionInference } from "./services/mlInference";
 import { resolveReviewState } from "./services/reviewState";
 import { scoreZeroError } from "./services/scoring";
@@ -25,7 +25,14 @@ describe("hardware adapter safeguards", () => {
 
   it("rejects incomplete telemetry payloads", () => {
     expect(validateTelemetryPayload({ latitude: 1 }).valid).toBe(false);
-    expect(validateTelemetryPayload({ latitude: 1, longitude: 2, altitude: 5, batteryPercent: 90, timestamp: 1 }).valid).toBe(true);
+    expect(validateTelemetryPayload({ missionId: 42, latitude: 1, longitude: 2, altitude: 5, speedMps: 2, batteryPercent: 90, timestamp: Date.now() }).valid).toBe(true);
+    expect(validateTelemetryPayload({ missionId: 42, latitude: 91, longitude: 2, altitude: 5, speedMps: 2, batteryPercent: 90, timestamp: Date.now() }).valid).toBe(false);
+  });
+
+  it("requires a configured bridge token and compares it safely", () => {
+    expect(authorizeBridgeToken("secret", "secret")).toBe(true);
+    expect(authorizeBridgeToken("wrong", "secret")).toBe(false);
+    expect(authorizeBridgeToken(undefined, "secret")).toBe(false);
   });
 
   it("surfaces a retry state when a configured bridge is unavailable", async () => {
@@ -49,7 +56,31 @@ describe("vision inference adapter", () => {
   it("returns explainable structural inference for bridge evidence", async () => {
     const inference = await runVisionInference({ fileName: "bridge_structural_frame.jpg", latitude: 28.61, longitude: 77.2, assetCriticality: 5, priorOpenDefects: 1, demo: true });
     expect(inference.label).toBe("structural");
+    expect(inference.source).toBe("deterministic-fallback");
     expect(inference.score.explanation.length).toBeGreaterThan(2);
+  });
+
+  it("uses a validated production CV response when configured", async () => {
+    const previousEndpoint = process.env.ML_INFERENCE_URL;
+    process.env.ML_INFERENCE_URL = "https://cv.example.test/infer";
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ model: "inspection-yolo-v2", label: "crack", confidence: 0.91, boundingBox: { x: 10, y: 20, width: 30, height: 25 } }) }));
+    const inference = await runVisionInference({ fileName: "frame.jpg", imageBase64: "data:image/jpeg;base64,AA==", latitude: 28.61, longitude: 77.2, assetCriticality: 4, priorOpenDefects: 0 });
+    expect(inference.source).toBe("production-cv");
+    expect(inference.model).toBe("inspection-yolo-v2");
+    expect(inference.label).toBe("crack");
+    vi.unstubAllGlobals();
+    if (previousEndpoint === undefined) delete process.env.ML_INFERENCE_URL; else process.env.ML_INFERENCE_URL = previousEndpoint;
+  });
+
+  it("falls back when a CV service response is malformed", async () => {
+    const previousEndpoint = process.env.ML_INFERENCE_URL;
+    process.env.ML_INFERENCE_URL = "https://cv.example.test/infer";
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ label: "unknown" }) }));
+    const inference = await runVisionInference({ fileName: "crack_frame.jpg", imageBase64: "data:image/jpeg;base64,AA==", latitude: 28.61, longitude: 77.2, assetCriticality: 4, priorOpenDefects: 0 });
+    expect(inference.source).toBe("deterministic-fallback");
+    expect(inference.label).toBe("crack");
+    vi.unstubAllGlobals();
+    if (previousEndpoint === undefined) delete process.env.ML_INFERENCE_URL; else process.env.ML_INFERENCE_URL = previousEndpoint;
   });
 });
 
@@ -61,6 +92,7 @@ describe("simulator lifecycle", () => {
     expect(mission.findings).toHaveLength(3);
     expect(mission.findings.map(finding => finding.label)).toEqual(expect.arrayContaining(["structural", "crack", "pothole"]));
     expect(mission.findings[0]?.score.severity).toBe("critical");
+    expect(mission.findings.some(finding => finding.label === "pothole")).toBe(true);
   });
 });
 
@@ -94,6 +126,16 @@ describe("public tRPC operations", () => {
     expect(Array.isArray(alerts)).toBe(true);
     expect(Array.isArray(reportRecords)).toBe(true);
     expect(Array.isArray(demoEvidence)).toBe(true);
+  });
+
+  it("returns source and provenance metadata for populated simulator evidence", async () => {
+    const ctx = { user: null, req: {} as TrpcContext["req"], res: {} as TrpcContext["res"] } as TrpcContext;
+    const caller = appRouter.createCaller(ctx);
+    const rows = await caller.drift.evidence.demoList({ missionId: 120001 });
+    const reference = rows.find(item => item.fileName === "public-domain-pothole-reference.jpg");
+    expect(reference?.source).toBe("simulator");
+    expect(reference?.provenance).toEqual(expect.objectContaining({ kind: "reference-image", author: "Uncl3dad", license: "Public domain dedication", sourceUrl: "https://commons.wikimedia.org/wiki/File:Pothole_Big.jpg" }));
+    expect(rows.some(item => item.provenance && typeof item.provenance === "object" && "kind" in item.provenance && item.provenance.kind === "generated-simulator")).toBe(true);
   });
 });
 

@@ -4,6 +4,7 @@ import { alerts, assets, auditEvents, defects, evidence, InsertUser, missions, r
 import { ENV } from "./_core/env";
 import { resolveReviewState } from "./services/reviewState";
 import { storagePut } from "./storage";
+import type { InferenceResult } from "./services/mlInference";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -81,8 +82,9 @@ export async function createDemoMissionRecord(input: { name: string; createdBy?:
     let evidenceId: number | null = null;
     try {
       const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720"><rect width="100%" height="100%" fill="#343434"/><path d="M0 600 L420 210 L860 720" stroke="#cfcfc8" stroke-width="92" fill="none"/><rect x="${460 + index * 55}" y="${240 + index * 35}" width="230" height="150" fill="none" stroke="#ffffff" stroke-width="6"/><text x="60" y="72" fill="#ffffff" font-size="30" font-family="Arial" letter-spacing="6">DRIFT / SIMULATED EVIDENCE</text><text x="60" y="670" fill="#ffffff" font-size="24" font-family="Arial">${finding.title.toUpperCase()} · ${Math.round(finding.confidence * 100)}% CONFIDENCE</text></svg>`;
-      const stored = await storagePut(`drift/system/missions/${missionId}/simulated-evidence-${index + 1}.svg`, svg, "image/svg+xml");
-      const evidenceResult = await db.insert(evidence).values({ missionId, fileName: `${finding.title.replace(/\s+/g, "-")}.svg`, mimeType: "image/svg+xml", storageKey: stored.key, storageUrl: stored.url, mediaKind: "annotation", latitude: finding.latitude.toFixed(6), longitude: finding.longitude.toFixed(6), playbackSeconds: finding.captureOffsetSeconds });
+      const isRealReference = finding.label === "pothole";
+      const stored = isRealReference ? { key: "pothole-big-public-domain_f78b4887.jpg", url: "/manus-storage/pothole-big-public-domain_f78b4887.jpg" } : await storagePut(`drift/system/missions/${missionId}/simulated-evidence-${index + 1}.svg`, svg, "image/svg+xml");
+      const evidenceResult = await db.insert(evidence).values({ missionId, fileName: isRealReference ? "public-domain-pothole-reference.jpg" : `${finding.title.replace(/\s+/g, "-")}.svg`, mimeType: isRealReference ? "image/jpeg" : "image/svg+xml", storageKey: stored.key, storageUrl: stored.url, mediaKind: isRealReference ? "photo" : "annotation", source: "simulator", provenance: isRealReference ? { kind: "reference-image", sourceUrl: "https://commons.wikimedia.org/wiki/File:Pothole_Big.jpg", license: "Public domain dedication", author: "Uncl3dad", note: "Reference image only; displayed route coordinates are simulator coordinates, not source capture coordinates." } : { kind: "generated-simulator", generator: "DRIFT simulator", note: "Synthetic annotation generated for repeatable demo workflow; not a live inspection." }, latitude: finding.latitude.toFixed(6), longitude: finding.longitude.toFixed(6), playbackSeconds: finding.captureOffsetSeconds });
       evidenceId = insertId(evidenceResult);
     } catch (error) {
       console.warn("[DRIFT Storage] Simulator evidence record could not be persisted:", error);
@@ -108,11 +110,24 @@ export async function createDemoMissionRecord(input: { name: string; createdBy?:
   return { missionId, assetId };
 }
 
-export async function createEvidenceRecord(input: { missionId: number; uploadedBy?: number | null; fileName: string; mimeType: string; storageKey: string; storageUrl: string; mediaKind: "photo" | "video" | "annotation" | "report"; latitude?: string; longitude?: string; playbackSeconds?: number }) {
+export async function createEvidenceRecord(input: { missionId: number; uploadedBy?: number | null; fileName: string; mimeType: string; storageKey: string; storageUrl: string; mediaKind: "photo" | "video" | "annotation" | "report"; latitude?: string; longitude?: string; playbackSeconds?: number; source?: "hardware" | "upload" | "simulator"; sha256?: string; capturedAt?: Date; cameraId?: string; provenance?: Record<string, unknown> }) {
   const db = await getDb();
   if (!db) throw new Error("Database is unavailable.");
-  const result = await db.insert(evidence).values(input);
+  const mission = (await db.select({ id: missions.id }).from(missions).where(eq(missions.id, input.missionId)).limit(1))[0];
+  if (!mission) throw new Error("Mission does not exist; evidence was not stored.");
+  const result = await db.insert(evidence).values({ ...input, source: input.source ?? "upload" });
   return { id: insertId(result) };
+}
+
+export async function persistInferenceDefect(input: { missionId: number; assetId: number; evidenceId: number; latitude: number; longitude: number; inference: InferenceResult; createdBy?: number | null }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is unavailable.");
+  const defectResult = await db.insert(defects).values({ missionId: input.missionId, assetId: input.assetId, evidenceId: input.evidenceId, defectType: input.inference.label, label: `${input.inference.label} candidate`, confidencePercent: Math.round(input.inference.confidence * 100), zeroErrorScore: input.inference.score.score, severity: input.inference.score.severity, status: input.inference.score.severity === "critical" ? "under_review" : "detected", reviewState: "pending", latitude: input.latitude.toFixed(6), longitude: input.longitude.toFixed(6), boundingBox: input.inference.boundingBox, explanation: input.inference.score.explanation, inferenceModel: input.inference.model, inferenceSource: input.inference.source, inferenceAnnotation: input.inference.annotationNote, inferenceCapturedAt: new Date() });
+  const defectId = insertId(defectResult);
+  await db.insert(severityHistory).values({ defectId, nextSeverity: input.inference.score.severity, score: input.inference.score.score, reason: input.inference.annotationNote, changedBy: input.createdBy ?? null });
+  if (input.inference.score.severity === "critical" || input.inference.score.severity === "high") await db.insert(alerts).values({ missionId: input.missionId, defectId, severity: input.inference.score.severity, title: `${input.inference.score.severity.toUpperCase()} · ${input.inference.label} candidate`, message: input.inference.score.urgency, status: "open" });
+  await db.insert(auditEvents).values({ missionId: input.missionId, defectId, actorId: input.createdBy ?? null, action: "inference.completed", details: { model: input.inference.model, source: input.inference.source, confidence: input.inference.confidence, evidenceId: input.evidenceId } });
+  return { defectId, source: input.inference.source, model: input.inference.model };
 }
 
 export async function listMissionEvidence(missionId: number) { const db = await getDb(); return db ? db.select().from(evidence).where(eq(evidence.missionId, missionId)).orderBy(desc(evidence.createdAt)) : []; }
@@ -122,12 +137,14 @@ export async function listDemoEvidence(missionId: number) {
   const mission = (await db.select().from(missions).where(eq(missions.id, missionId)).limit(1))[0];
   if (!mission || mission.mode !== "demo") return [];
   const rows = await db.select().from(evidence).where(eq(evidence.missionId, missionId)).orderBy(desc(evidence.createdAt));
-  return rows.filter(item => item.mediaKind === "annotation");
+  return rows.filter(item => item.source === "simulator");
 }
 
 export async function addTelemetryRecord(input: { missionId: number; latitude: number; longitude: number; altitude: number; speedMps: number; batteryPercent: number; timestamp: number }) {
   const db = await getDb();
   if (!db) throw new Error("Database is unavailable.");
+  const mission = (await db.select({ id: missions.id }).from(missions).where(eq(missions.id, input.missionId)).limit(1))[0];
+  if (!mission) throw new Error("Mission does not exist; telemetry was not stored.");
   const result = await db.insert(telemetry).values({ missionId: input.missionId, latitude: input.latitude.toFixed(6), longitude: input.longitude.toFixed(6), altitudeMeters: Math.round(input.altitude), speedMps: Math.round(input.speedMps), batteryPercent: Math.round(input.batteryPercent), capturedAt: new Date(input.timestamp) });
   await db.insert(auditEvents).values({ missionId: input.missionId, action: "hardware.telemetry_ingested", details: { source: "operator-approved adapter", batteryPercent: input.batteryPercent } });
   return { id: insertId(result) };
