@@ -1,0 +1,42 @@
+{
+  "build_command": "pnpm run build",
+  "capabilities": [
+    "server",
+    "db",
+    "user"
+  ],
+  "dev_command": "pnpm run dev",
+  "env_vars": {
+    "DATABASE_URL": "mysql://4TowAp1athAUyN6.bd415cdb7547:3tfSHzS5UB57JNoTtZ38@gateway04.us-east-1.prod.aws.tidbcloud.com:4000/SigBZbymuyuZtBpVbVpfXu?ssl={\"rejectUnauthorized\":true}"
+  },
+  "experiments": [
+    "no_db_push"
+  ],
+  "git_remote": {
+    "repo_url": "https://7f0548f6b28a1758d9bf7be630d36cb4.artifacts.cloudflare.net/git/prod/SigBZbymuyuZtBpVbVpfXu.git",
+    "expiration": "2026-08-26T10:55:11.372Z",
+    "token": "art_v2_x_e1a2de8d70d40cc7268abbbd4f72e4752c85a2cf?expires=1787741711",
+    "backend": "GIT_BACKEND_ARTIFACTS"
+  },
+  "name": "drift-inspection-platform",
+  "path": "/home/ubuntu/drift-inspection-platform",
+  "port": 3000,
+  "secrets": {
+    "BUILT_IN_FORGE_API_KEY": "8CYCkXvdRwyUrbiL9kxKe4",
+    "BUILT_IN_FORGE_API_URL": "https://forge.manus.ai",
+    "JWT_SECRET": "TYGaHMjZoEJfq673tsj75f",
+    "OAUTH_SERVER_URL": "https://api.manus.im",
+    "OWNER_NAME": "ridhima kulashri",
+    "OWNER_OPEN_ID": "ATtUSA7f4XRwRBDXkaAKpA",
+    "VITE_ANALYTICS_ENDPOINT": "https://manus-analytics.com",
+    "VITE_ANALYTICS_WEBSITE_ID": "f7798a12-bbfc-49d0-80e4-2f1f100de101",
+    "VITE_APP_ID": "SigBZbymuyuZtBpVbVpfXu",
+    "VITE_APP_LOGO": "",
+    "VITE_APP_TITLE": "DRIFT — AI Infrastructure Inspection",
+    "VITE_FRONTEND_FORGE_API_KEY": "dd8RszQ2hvCmbxifQ57Zbr",
+    "VITE_FRONTEND_FORGE_API_URL": "https://forge.manus.ai",
+    "VITE_OAUTH_PORTAL_URL": "https://manus.im"
+  },
+  "template_id": "web-db-user",
+  "test_command": "pnpm test"
+}
